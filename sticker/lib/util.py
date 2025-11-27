@@ -18,26 +18,65 @@ from io import BytesIO
 import os.path
 import json
 
-from PIL import Image
+from PIL import Image, ImageSequence
 
 from . import matrix
 
 open_utf8 = partial(open, encoding='UTF-8')
 
-def convert_image(data: bytes) -> (bytes, int, int):
-    image: Image.Image = Image.open(BytesIO(data)).convert("RGBA")
+# def convert_image(data: bytes) -> (bytes, int, int):
+#     image: Image.Image = Image.open(BytesIO(data)).convert("RGBA")
+#     new_file = BytesIO()
+#     image.save(new_file, "png")
+#     w, h = image.size
+#     if w > 256 or h > 256:
+#         # Set the width and height to lower values so clients wouldn't show them as huge images
+#         if w > h:
+#             h = int(h / (w / 256))
+#             w = 256
+#         else:
+#             w = int(w / (h / 256))
+#             h = 256
+#     return new_file.getvalue(), w, h
+
+def convert_image(data: bytes, max_w=256, max_h=256) -> (bytes, int, int):
+    original = Image.open(BytesIO(data))
     new_file = BytesIO()
-    image.save(new_file, "png")
-    w, h = image.size
-    if w > 256 or h > 256:
-        # Set the width and height to lower values so clients wouldn't show them as huge images
-        if w > h:
-            h = int(h / (w / 256))
-            w = 256
-        else:
-            w = int(w / (h / 256))
-            h = 256
-    return new_file.getvalue(), w, h
+
+    frames = []
+    w, h = original.size
+
+    for frame in ImageSequence.Iterator(original):
+        frame = frame.convert("RGBA")
+        fw, fh = frame.size
+
+        # Resize frame if needed
+        if fw > max_w or fh > max_h:
+            if fw > fh:
+                fh = int(fh / (fw / max_w))
+                fw = max_w
+            else:
+                fw = int(fw / (fh / max_h))
+                fh = max_h
+            frame = frame.resize((fw, fh), Image.LANCZOS)
+
+        frames.append(frame)
+
+    # Save the sequence as an animated GIF
+    frames[0].save(
+        new_file,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        loop=0,
+        duration=original.info.get("duration", 100),  # preserve timing
+        disposal=2,
+        optimize=False
+    )
+
+    new_file.seek(0)
+    final_w, final_h = frames[0].size
+    return new_file.getvalue(), final_w, final_h
 
 
 def add_to_index(name: str, output_dir: str) -> None:
@@ -65,16 +104,16 @@ def make_sticker(mxc: str, width: int, height: int, size: int,
             "w": width,
             "h": height,
             "size": size,
-            "mimetype": "image/png",
+            "mimetype": "image/gif",
 
             # Element iOS compatibility hack
-            "thumbnail_url": mxc,
-            "thumbnail_info": {
-                "w": width,
-                "h": height,
-                "size": size,
-                "mimetype": "image/png",
-            },
+            # "thumbnail_url": mxc,
+            # "thumbnail_info": {
+            #     "w": width,
+            #     "h": height,
+            #     "size": size,
+            #     "mimetype": "image/png",
+            # },
         },
         "msgtype": "m.sticker",
     }
